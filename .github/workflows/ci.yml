@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 依赖
+        run: pip install flask
+      - name: ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: 语法检查
+        run: python -m py_compile app.py
+      - name: 冒烟测试（mock 引擎，不需要 GPU）
+        run: ./scripts/smoke_test.sh
+      - name: 前端清单检查
+        run: |
+          grep -q "fvdl" templates/index.html
+          grep -q "api/estimate" templates/index.html
