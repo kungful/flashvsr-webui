@@ -80,6 +80,10 @@ GET    /fvdl/<kind>/<name>   直连下载（Range，?dl=1 附件）
 GET    /g                    反代到官方 Gradio UI
 ```
 
+## 从零重建
+
+镜像/实例全丢时看 [`docs/REBUILD.md`](docs/REBUILD.md)：装环境 → 拉权重（hf-mirror）→ 起服务 → **存镜像**。
+
 ## 已知限制（务必读）
 
 - 宽高必须 **128 的倍数**，所以 1080p 的 2× 是 `3840×2176`
