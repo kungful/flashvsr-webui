@@ -1,0 +1,24 @@
+services:
+  flashvsr-webui:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: flashvsr-webui:latest
+    ports:
+      - "7860:7860"
+    environment:
+      FVSR_ENGINE: real          # 没有 GPU 就改成 mock
+      FVSR_PORT: "7860"
+      FVSR_DATA: /data
+    volumes:
+      - ../../data:/data
+      # 权重（turbo/base 各 6.4 GB）放宿主机，别打进镜像
+      - ../../third_party/FlashVSR_Plus/ckpts:/opt/flashvsr-webui/third_party/FlashVSR_Plus/ckpts
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped

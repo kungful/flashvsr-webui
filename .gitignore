@@ -1,0 +1,19 @@
+# 数据与产物
+data/
+outputs/
+uploads/
+*.mp4
+*.png
+!docs/**/*.png
+
+# 第三方代码 / 虚拟环境
+third_party/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# 本地配置
+.env
+*.local
+.DS_Store

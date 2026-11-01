@@ -1,0 +1,7 @@
+Apache License 2.0
+
+本仓库（FlashVSR WebUI：UI 层、引擎适配层、部署脚本）以 Apache License 2.0 发布。
+许可证全文见 https://www.apache.org/licenses/LICENSE-2.0
+
+上游项目 FlashVSR+ (https://github.com/OpenImagingLab/FlashVSR_Plus) 亦为 Apache-2.0，
+其代码、模型权重与文档版权归原作者所有；本仓库不包含、不分发上游代码与权重。

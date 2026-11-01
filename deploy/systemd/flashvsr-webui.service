@@ -1,0 +1,21 @@
+# 装法：
+#   sudo cp deploy/systemd/flashvsr-webui.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now flashvsr-webui
+[Unit]
+Description=FlashVSR WebUI
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/flashvsr-webui
+Environment=FVSR_PORT=7860
+Environment=FVSR_DATA=/var/lib/flashvsr
+Environment=FVSR_ENGINE=real
+ExecStart=/opt/flashvsr-webui/deploy/entrypoint.sh
+Restart=always
+RestartSec=5
+# 推理进程吃显存，别让它被 OOM killer 顺手带走整个容器
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target
