@@ -929,13 +929,17 @@ def api_gpu():
             except Exception:
                 pass
     procs = []
-    p = run(["nvidia-smi", "--query-compute-apps=pid,used_memory",
-             "--format=csv,noheader,nounits"], timeout=8)
-    if p.returncode == 0:
-        for line in p.stdout.strip().splitlines():
-            parts = [x.strip() for x in line.split(",")]
-            if len(parts) >= 2 and parts[0].isdigit():
-                procs.append({"pid": int(parts[0]), "mb": int(float(parts[1] or 0))})
+    if have("nvidia-smi"):  # 没有 nvidia-smi 时别抛 500，前端轮询会一直报错
+        try:
+            p = run(["nvidia-smi", "--query-compute-apps=pid,used_memory",
+                     "--format=csv,noheader,nounits"], timeout=8)
+        except (OSError, subprocess.SubprocessError):
+            p = None
+        if p is not None and p.returncode == 0:
+            for line in p.stdout.strip().splitlines():
+                parts = [x.strip() for x in line.split(",")]
+                if len(parts) >= 2 and parts[0].isdigit():
+                    procs.append({"pid": int(parts[0]), "mb": int(float(parts[1] or 0))})
     out["procs"] = procs
     return jsonify(out)
 
