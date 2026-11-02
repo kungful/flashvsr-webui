@@ -1,9 +1,10 @@
 # 仙宫云镜像（直接用，别再装环境）
 
-| 镜像 | id | 大小 | 权重 | 状态 |
+| 镜像 | id | 大小 | 权重 | 说明 |
 |---|---|---|---|---|
-| **完整版（推荐）** | `d1dd208b-6ebd-4028-a766-1b9e2fa9b301` | 40.6 GB | turbo + base + v1 全齐 | 2026-11-02 |
-| 精简版 | `08da873c-f3d5-4805-a649-53e6d753967e` | 26.9 GB | 只有 v1 | 2026-11-02 |
+| **v3（现在用这个）** | `1b0597fd-d029-4c38-b9ab-69c26085fc14` | 37.0 GB | turbo + base + v1（**逐个校验过 safetensors 能解**） | 带「上传历史」功能 |
+| v2 | `d1dd208b-6ebd-4028-a766-1b9e2fa9b301` | 40.6 GB | 同上，但 **base/dit 是坏的**（下少了 33 MB） | 不要用 |
+| v1 | `08da873c-f3d5-4805-a649-53e6d753967e` | 26.9 GB | 只有 v1 | 没有上传历史 |
 
 > 平台不给 `saveimage` 的 `name` 生效，两个镜像在控制台里都显示成 UUID 或「临时镜像 xxxxx」。
 > **要改名自己去控制台改，千万别删**（镜像只收存储费，比重新下 18 GB 权重便宜太多）。
@@ -11,7 +12,7 @@
 ```bash
 X=~/.pi/agent/skills/xgc-api/scripts/xgc.py
 python3 "$X" deploy --gpu "NVIDIA GeForce RTX 4090 D" --count 1 \
-    --image d1dd208b-6ebd-4028-a766-1b9e2fa9b301 --image-type private \
+    --image 1b0597fd-d029-4c38-b9ab-69c26085fc14 --image-type private \
     --name flashvsr --dry-run      # 先看 payload，确认后再 --yes
 # 运行中后直接开
 #   https://<实例ID>-7860.container.x-gpu.com
