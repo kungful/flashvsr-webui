@@ -99,3 +99,20 @@ python -m inference.run_stream ... --attn-kernel triton_block_sparse
 
 Triton 后端**不需要 flash-attn**（官方说“depends on FlashAttention utilities”，实测不用也能跑
 1280×768/2048 级别）。WebUI 侧用 `FVSR_ATTN_KERNEL=triton_block_sparse` 把默认后端钉住。
+
+## 12. 拉权重：单连接 13 小时，48 连接 12 分钟
+
+国内机房实测（同一台 4090D）：`hf download` 默认单连接只有 **0.13~0.17 MB/s**（文件走
+HuggingFace 的 Xet 存储，hf-mirror 也是同一套后端），6.4 GB 要 **13 小时**；hf-mirror 走
+多连接直接 429。改成 48 个并行 Range 请求后：
+
+| 方式 | 速度 | 5.68 GB |
+|---|---|---|
+| 单连接（`hf download` 默认） | 0.13~0.17 MB/s | ~13 h |
+| huggingface.co 8 连接 | 1.18 MB/s | 80 min |
+| huggingface.co 24 连接 | 2.98 MB/s | 32 min |
+| **huggingface.co 48 连接** | **8.9 MB/s** | **12 min** |
+
+用 `deploy/xgc/dl_parallel.py`（或 `fetch_ckpts.sh`，内部就是它）：失败自动换源、断点续传、
+完成后校验字节数。下载前先想清楚**这钱该不该花**：GPU 实例按秒计费，拿它挂着下 13 小时的
+权重 ≈ ¥20；并行下 12 分钟只要 ¥0.7。v1 权重还有 ModelScope 这条 10~80 MB/s 的快路。

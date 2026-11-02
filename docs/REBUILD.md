@@ -31,33 +31,41 @@ git clone <repo> flashvsr-webui && cd flashvsr-webui
 ./scripts/bootstrap.sh          # 官方代码 + .venv + torch + requirements + flask
 ```
 
-## 2. 拉权重（国内用 hf-mirror，别直连）
+## 2. 拉权重（**必须并行下**，单连接会等到天亮）
+
+2026-11 实测：本机房到 HF / hf-mirror 的单连接只有 **0.13~0.17 MB/s**（文件走 Xet 存储，
+`hf download` 默认就是单连接，6.4 GB 要 13 小时）；hf-mirror 多连接还会直接 429。
+**48 段并行能到 8.9 MB/s（12 分钟）**。工具有两个：
 
 ```bash
-export HF_ENDPOINT=https://hf-mirror.com
-pip install -U "huggingface_hub[cli]"
+# A) 一条命令补齐（内部就是 48 段并行 + 失败换源 + 断点续传）
+bash deploy/xgc/fetch_ckpts.sh            # turbo + base + TCDecoder
+N=64 bash deploy/xgc/fetch_ckpts.sh all   # 并发再拉高
+bash deploy/xgc/fetch_ckpts.sh turbo      # 只补 turbo
 
-CK=third_party/FlashVSR_Plus/ckpts
-mkdir -p $CK/turbo $CK/base
-
-# turbo
-hf download ruchangyao/FlashVSR_plus dit.safetensors   --local-dir /tmp/w/turbo
-hf download ruchangyao/FlashVSR_plus lq_proj_in.safetensors --local-dir /tmp/w/turbo
-# base（同一 HF 仓库里另一组文件，按仓库 actual 文件名下载）
-hf download ruchangyao/FlashVSR_plus --local-dir /tmp/w/all   # 全量拉一次最省事
-# 再按文件名分到 turbo/ 与 base/，TCDecoder.ckpt 放 ckpts/ 根
-
-python - <<'PY'
-import glob, os, shutil, pathlib
-ck = pathlib.Path("third_party/FlashVSR_Plus/ckpts")
-print("ckpts 现状：")
-for p in sorted(ck.rglob("*")):
-    if p.is_file(): print(f"  {p.relative_to(ck)}  {p.stat().st_size/1e9:.2f} GB")
-PY
+# B) 单独下一个文件
+python3 deploy/xgc/dl_parallel.py \
+  https://huggingface.co/ruchangyao/FlashVSR_plus/resolve/main/turbo/dit.safetensors \
+  third_party/FlashVSR_Plus/ckpts/turbo/dit.safetensors -n 48 \
+  -r https://hf-mirror.com/ruchangyao/FlashVSR_plus/resolve/main/turbo/dit.safetensors
 ```
 
-> 权重文件名与分组以 HF 仓库页面为准；只要最终满足上面的目录形状，`--mode turbo|base` 就能跑。
-> 时间紧可以先只拉 `turbo` + `TCDecoder.ckpt`（约 7 GB），UI 里 base 会加载失败但不影响 turbo。
+v1 权重还有个更快的来源：ModelScope `AI-ModelScope/FlashVSR`（10~80 MB/s，2 分钟下完），
+但要把 `diffusion_pytorch_model_streaming_dmd.safetensors` 改名为 `dit.safetensors`、
+把 `LQ_proj_in.ckpt` **转成** `lq_proj_in.safetensors`（`model_io` 按后缀选加载器，直接改名会走错分支）。
+转换方法见 [`IMAGE-XGC.md`](IMAGE-XGC.md)。
+
+拉完先核对大小，再起服务：
+
+```bash
+python3 deploy/xgc/check_ckpts.py          # 或直接 ls -l ckpts/*/
+```
+
+期望（十进制 GB）：turbo/dit 5.68、turbo/lq_proj_in 1.15、base/dit 5.64、
+base/lq_proj_in 1.15、v1/dit 5.68、v1/lq_proj_in 0.58、TCDecoder 0.19、Wan2.1_VAE 0.51。
+
+> 时间紧可以先只拉 `turbo` + `TCDecoder.ckpt`（约 6.8 GB，12 分钟），
+> WebUI 会自动只显示权重齐全的档位。
 
 ## 3. 起服务
 

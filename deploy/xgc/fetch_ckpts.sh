@@ -1,43 +1,56 @@
 #!/bin/bash
-# 补齐 FlashVSR+ 的 turbo / base 权重（v1 已内置在镜像里）
-# 用法（在实例里跑，网络好的时候）：
-#   bash /root/fetch_ckpts.sh          # 拉 turbo（6.4G，够用）
-#   bash /root/fetch_ckpts.sh all      # turbo + base（各 6.4G）
+# 补齐 / 修复 FlashVSR+ 的权重（镜像里一般已经全套，这里用于换机器或重装后补）
 #
-# 实测：huggingface.co / hf-mirror.com 在本机房只有 0.3~0.9 MB/s（文件走 Xet 存储，
-# 慢得没法用）；ModelScope 能到 10~80 MB/s，但只有 v1 的权重。所以：
-#   网快的时候（或换机房/挂代理）再跑这个脚本补 turbo/base。
+#   bash fetch_ckpts.sh            # 缺什么补什么（turbo + base + v1 + TCDecoder）
+#   bash fetch_ckpts.sh turbo      # 只补 turbo
+#   N=64 bash fetch_ckpts.sh       # 改并行段数（默认 48）
+#
+# 为什么用 dl_parallel.py 而不是 hf download：
+#   本机房到 HuggingFace / hf-mirror 单连接只有 0.13~0.17 MB/s（文件走 Xet），
+#   6.4 GB 要 13 小时；48 段并行能到 8.9 MB/s（约 12 分钟）。hf_transfer 同思路，
+#   但它依赖 hf 端点/鉴权，这个纯 curl 分段，还能失败换源。
 set -uo pipefail
 CK=/opt/FlashVSR_Plus/ckpts
-WANT="${1:-turbo}"          # turbo | all
-mkdir -p "$CK/turbo" "$CK/base"
-export HF_HUB_ENABLE_HF_TRANSFER=0
-export PATH=/root/miniconda3/bin:$PATH
+PY=/root/miniconda3/bin/python
+N="${N:-48}"
+WANT="${1:-all}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+DL="$HERE/dl_parallel.py"
+[ -f "$DL" ] || DL=/root/dl_parallel.py
+[ -f "$DL" ] || { echo "找不到 dl_parallel.py（跟本脚本放同一目录，或放 /root/）"; exit 1; }
 
-pull() {  # pull <repo_path> <dest_dir>
-  local p="$1" d="$2" n; n="$(basename "$p")"
-  for base in "${HF_ENDPOINT:-https://hf-mirror.com}" "https://huggingface.co"; do
-    echo "== $p  ← $base"
-    if curl -fL --retry 3 --retry-delay 3 -m 3600 -o "$d/$n.part" \
-        "$base/ruchangyao/FlashVSR_plus/resolve/main/$p"; then
-      mv "$d/$n.part" "$d/$n"; echo "   ok $(du -h "$d/$n" | cut -f1)"; return 0
-    fi
-    rm -f "$d/$n.part"; echo "   失败，换下一个源"
-  done
-  return 1
+mkdir -p "$CK/turbo" "$CK/base" "$CK/v1"
+HF=https://huggingface.co/ruchangyao/FlashVSR_plus/resolve/main
+MIR=https://hf-mirror.com/ruchangyao/FlashVSR_plus/resolve/main
+
+get() {  # get <远端路径> <目标文件> [备用远端路径]
+  local p="$1" out="$2" alt="${3:-}"
+  [ -s "$out" ] && { echo "✓ 已有 $(basename "$(dirname "$out")")/$(basename "$out")"; return 0; }
+  echo "== $p"
+  "$PY" "$DL" "$HF/$p" "$out" -n "$N" ${alt:+-r "$MIR/$alt"}
 }
 
-pull turbo/dit.safetensors "$CK/turbo"
-pull turbo/lq_proj_in.safetensors "$CK/turbo"
+case "$WANT" in
+  turbo|all)
+    get turbo/dit.safetensors          "$CK/turbo/dit.safetensors"          turbo/dit.safetensors
+    get turbo/lq_proj_in.safetensors   "$CK/turbo/lq_proj_in.safetensors"   turbo/lq_proj_in.safetensors
+    ;;
+esac
 if [ "$WANT" = "all" ]; then
-  pull base/dit.safetensors "$CK/base"
-  pull base/lq_proj_in.safetensors "$CK/base"
+  get base/dit.safetensors         "$CK/base/dit.safetensors"           base/dit.safetensors
+  get base/lq_proj_in.safetensors  "$CK/base/lq_proj_in.safetensors"    base/lq_proj_in.safetensors
+  get TCDecoder.ckpt               "$CK/TCDecoder.ckpt"                 TCDecoder.ckpt
 fi
 
 echo
 echo "现在有的档位（WebUI 会自动只显示权重齐全的档位）："
-for m in v1 turbo base; do
-  [ -f "$CK/$m/dit.safetensors" ] && echo "  ✓ $m" || echo "  ✗ $m（缺 dit.safetensors）"
+for m in turbo base v1; do
+  if [ -f "$CK/$m/dit.safetensors" ] && [ -f "$CK/$m/lq_proj_in.safetensors" ]; then
+    echo "  ✓ $m  $(du -sh "$CK/$m" | cut -f1)"
+  else
+    echo "  ✗ $m（缺 dit 或 lq_proj_in）"
+  fi
 done
 echo
-echo "补完记得重启 WebUI： kill \$(ss -lntp | grep ':7860' | grep -o 'pid=[0-9]*' | cut -d= -f2)   # start.d 会自己拉起来"
+echo "补完重启 WebUI："
+echo "  kill \$(ss -lntp | grep ':7860' | grep -o 'pid=[0-9]*' | cut -d= -f2)   # start.d 会自动拉起"

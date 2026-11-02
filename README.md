@@ -47,7 +47,8 @@ make smoke
 | 任意 Linux + GPU | `deploy/systemd/flashvsr-webui.service` | 最通用，暴露 7860 |
 | Docker / RunPod / Vast | `make docker-up` | 权重挂载，别打进镜像 |
 | 仙宫云 XGC | `./deploy/xgc/deploy_xgc.sh` | 一键：开实例→装→自检 |
-| 仙宫云 现成镜像 | 镜像 `08da873c-f3d5-4805-a649-53e6d753967e` | 环境+v1 权重+自启都装好，开机即用，见 [`docs/IMAGE-XGC.md`](docs/IMAGE-XGC.md) |
+| 仙宫云 现成镜像 | `d1dd208b-6ebd-4028-a766-1b9e2fa9b301` | 40.6 GB，turbo/base/v1 权重全齐 + 自启，开机即用，见 [`docs/IMAGE-XGC.md`](docs/IMAGE-XGC.md) |
+| 仙宫云 精简镜像 | `08da873c-f3d5-4805-a649-53e6d753967e` | 26.9 GB，只带 v1 权重 |
 
 细节见 [`docs/PROVIDERS.md`](docs/PROVIDERS.md)。
 
