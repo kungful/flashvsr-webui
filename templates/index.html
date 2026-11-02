@@ -127,6 +127,30 @@
   }
   .x:hover{color:var(--err);border-color:#4a2430}
 
+  /* ---------- 历史上传 ---------- */
+  .hist{margin-top:12px;display:none}
+  .hist.show{display:block}
+  .hist-h{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--dim);margin-bottom:6px}
+  .hist-h .hist-c{color:var(--dim2);font-size:10.5px}
+  .hist-h .a{margin-left:auto;font-size:11px}
+  .hist-list{display:flex;flex-direction:column;gap:5px;max-height:196px;overflow:auto}
+  .hist-item{
+    display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:9px;cursor:pointer;
+    background:#0e1219;border:1px solid #1d2434;
+  }
+  .hist-item:hover{border-color:var(--line2);background:#111725}
+  .hist-item.on{border-color:rgba(56,225,255,.55);background:#101a24}
+  .hist-item .h-dot{width:6px;height:6px;border-radius:99px;background:var(--acc);flex:none;opacity:0}
+  .hist-item.on .h-dot{opacity:1}
+  .hist-item .h-main{min-width:0;flex:1}
+  .hist-item .h-name{font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hist-item .h-sub{font-size:10px;color:var(--dim2);margin-top:2px;font-variant-numeric:tabular-nums}
+  .hist-item .h-del{
+    flex:none;border:0;background:transparent;color:var(--dim2);cursor:pointer;
+    font-size:12px;padding:2px 4px;line-height:1;
+  }
+  .hist-item .h-del:hover{color:var(--err)}
+
   /* ---------- controls ---------- */
   .row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 6px}
   .row label{font-size:12px;color:var(--dim)}
@@ -415,6 +439,13 @@
           <button class="x" id="clearFile" title="移除">✕</button>
         </div>
         <input type="file" id="file" hidden accept="video/*,image/*">
+        <div class="hist" id="histWrap">
+          <div class="hist-h">
+            <span>历史上传</span><span class="hist-c" id="histCount"></span>
+            <a class="a" id="histReload" href="#">刷新</a>
+          </div>
+          <div class="hist-list" id="histList"></div>
+        </div>
       </div>
     </section>
 
@@ -777,6 +808,7 @@ function setFile(m){
   $('#fchips').innerHTML = chips.join('');
   refreshEstimate();
   $('#run').disabled = false;
+  loadHistory();
 }
 
 $('#demo').addEventListener('click', async e=>{
@@ -805,7 +837,72 @@ function resetFile(){
   $('#dlBtn').style.display = 'none';
   $('#resTag').textContent = '';
   fileInput.value = '';
+  loadHistory();
 }
+
+/* ---------------- 历史上传：列出来、点一下就选回去 ---------------- */
+function fmtWhen(ts){
+  const d = new Date(ts * 1000), now = Date.now() / 1000;
+  const diff = now - ts;
+  if(diff < 60) return '刚刚';
+  if(diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
+  if(diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
+  return (d.getMonth() + 1) + '/' + d.getDate() + ' '
+    + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+async function loadHistory(){
+  const wrap = $('#histWrap'), list = $('#histList');
+  if(!wrap || !list) return;
+  let files = [];
+  try{
+    const r = await fetch(P + '/api/uploads');
+    files = (await r.json()).files || [];
+  }catch(e){ return; }
+  $('#histCount').textContent = files.length ? '· ' + files.length + ' 个' : '';
+  if(!files.length){ wrap.classList.remove('show'); list.innerHTML = ''; return; }
+  wrap.classList.add('show');
+  list.innerHTML = '';
+  files.forEach(f=>{
+    const el = document.createElement('div');
+    const on = state.file && state.file.id === f.id;
+    el.className = 'hist-item' + (on ? ' on' : '');
+    el.innerHTML = '<span class="h-dot"></span>'
+      + '<div class="h-main"><div class="h-name"></div><div class="h-sub"></div></div>'
+      + '<button class="h-del" title="删除这份上传">✕</button>';
+    el.querySelector('.h-name').textContent = f.filename;
+    el.querySelector('.h-sub').textContent = [
+      f.width ? f.width + '×' + f.height : '',
+      f.duration ? fmtDur(f.duration) : '',
+      f.size_h || '',
+      fmtWhen(f.mtime),
+    ].filter(Boolean).join(' · ');
+    el.addEventListener('click', ev=>{
+      if(ev.target.classList.contains('h-del')) return;
+      pickHistory(f);
+    });
+    el.querySelector('.h-del').addEventListener('click', async ev=>{
+      ev.stopPropagation();
+      if(!confirm('删除这份上传（文件也一起删）？\n' + f.filename)) return;
+      try{ await fetch(P + '/api/uploads/' + f.id, {method:'DELETE'}); }catch(e){}
+      if(state.file && state.file.id === f.id) resetFile(); else loadHistory();
+    });
+    list.appendChild(el);
+  });
+}
+
+function pickHistory(f){
+  setFile({
+    id: f.id, filename: f.filename, width: f.width, height: f.height,
+    fps: f.fps, frames: f.frames, duration: f.duration,
+    video_codec: f.codec, kind: f.kind || 'video',
+    size_mb: f.size ? (f.size / 1048576).toFixed(2) : '—',
+    url: f.url,
+  });
+}
+
+$('#histReload').addEventListener('click', e=>{ e.preventDefault(); loadHistory(); });
+loadHistory();
 
 /* ---------------- segmented controls / sliders ---------------- */
 $$('.seg').forEach(seg=>{

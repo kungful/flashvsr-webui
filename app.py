@@ -171,6 +171,54 @@ JOBS: dict[str, dict] = {}
 FILES: dict[str, dict] = {}
 LOCK = threading.Lock()
 
+# ---------------------------------------------------------------- 上传历史
+# FILES 只活在内存里，一重启就丢；用一个 json 索引把「上传过什么」记住，
+# 这样 WebUI 能列历史上传、直接选回某个视频重跑（不用再传一遍）。
+UPLOAD_INDEX = DATA / "uploads.json"
+
+
+def _idx_read() -> list:
+    try:
+        data = json.loads(UPLOAD_INDEX.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _idx_write(items: list) -> None:
+    try:
+        UPLOAD_INDEX.write_text(json.dumps(items[:300], ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def index_upload(fid: str, path: Path, name: str, meta: dict) -> None:
+    """记一条上传；同名 id 覆盖，新的插最前"""
+    items = [x for x in _idx_read() if x.get("id") != fid]
+    items.insert(0, {"id": fid, "file": path.name, "filename": name,
+                     "mtime": int(time.time()), "meta": meta})
+    _idx_write(items)
+
+
+def load_uploads() -> None:
+    """启动时把 uploads 目录装回 FILES：先信索引，索引没覆盖的再 ffprobe（限 30 个）"""
+    idx = {x.get("id"): x for x in _idx_read()}
+    files = sorted((p for p in UPLOADS.glob("*") if p.is_file() and not p.name.startswith(".")),
+                   key=lambda p: -p.stat().st_mtime)[:60]
+    probed = 0
+    for p in files:
+        fid = p.stem
+        item = idx.get(fid) or {}
+        meta = item.get("meta")
+        if not isinstance(meta, dict) or not meta.get("width"):
+            if probed >= 30:
+                continue
+            meta = probe(p)
+            probed += 1
+            if not meta.get("width"):
+                continue
+        FILES[fid] = {"path": str(p), "meta": meta, "name": item.get("filename") or p.name}
+
 
 # ---------------------------------------------------------------- utils
 def run(cmd: list[str], timeout: int = 900) -> subprocess.CompletedProcess:
@@ -719,10 +767,51 @@ def api_upload():
         return jsonify({"error": meta.get("error", "无法解析该文件")}), 400
 
     FILES[fid] = {"path": str(dst), "meta": meta, "name": f.filename}
+    index_upload(fid, dst, f.filename, meta)
     meta.update({"id": fid, "filename": f.filename,
                  "url": media_url("uploads", dst.name),
                  "size_mb": round(dst.stat().st_size / 1048576, 2)})
     return jsonify(meta)
+
+
+@app.get("/api/uploads")
+def api_uploads():
+    """历史上的上传（新→旧）—— 前端靠它做「选历史视频」，不用重传"""
+    items = []
+    for fid, info in list(FILES.items()):
+        p = Path(info.get("path") or "")
+        if not p.is_file():
+            continue
+        m = info.get("meta") or {}
+        st = p.stat()
+        items.append({
+            "id": fid,
+            "filename": info.get("name") or p.name,
+            "size": st.st_size,
+            "size_h": human_size(st.st_size),
+            "mtime": int(st.st_mtime),
+            "width": m.get("width"), "height": m.get("height"),
+            "frames": m.get("frames"), "fps": m.get("fps"),
+            "duration": m.get("duration"), "codec": m.get("video_codec"),
+            "kind": m.get("kind", "video"),
+            "url": media_url("uploads", p.name),
+        })
+    items.sort(key=lambda x: -x["mtime"])
+    return jsonify({"files": items})
+
+
+@app.delete("/api/uploads/<fid>")
+def api_upload_delete(fid: str):
+    """删一条上传（文件 + 索引一起）"""
+    info = FILES.pop(fid, None)
+    if not info:
+        return jsonify({"error": "没有这条上传记录"}), 404
+    try:
+        Path(info.get("path") or "").unlink(missing_ok=True)
+    except Exception:
+        pass
+    _idx_write([x for x in _idx_read() if x.get("id") != fid])
+    return jsonify({"ok": True, "id": fid})
 
 
 @app.post("/api/job")
@@ -1174,6 +1263,7 @@ if PREFIX:
 
 
 if __name__ == "__main__":
+    load_uploads()
     port = int(os.environ.get("FVSR_PORT", "7861"))
     print(f"FlashVSR WebUI → http://127.0.0.1:{port}")
     app.run(host="0.0.0.0", port=port, threaded=True, debug=False)

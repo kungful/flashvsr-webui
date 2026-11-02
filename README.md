@@ -21,6 +21,7 @@
 - **安全**：同一时刻只允许一个推理任务、残留进程自动清理、无输出 900s 判卡死、输出永不小于原片
 - **尺寸档位**：只选"几百万像素"，长宽比永远跟素材一致（竖屏就出竖屏），并按 128 对齐
 - **下载传送门**：`/fvdl` 原生 Range/206 断点续传；页面内「⚡ 极速」8 路并发；可删除、可清空
+- **上传历史**：传过一次就记住（`FVSR_DATA/uploads.json` + 目录扫描），重启后还能在左侧「历史上传」里点回来，不用重传
 - **可迁移**：一套代码跑裸机 / Docker / 仙宫云，路径与解释器全靠环境变量
 
 ## 快速开始
@@ -77,6 +78,8 @@ POST   /api/job              建任务（预检会直接 409 拒绝超限）
 GET    /api/job/<id>         进度 / 阶段 / 日志 / 峰值显存
 GET    /api/outputs          产物列表
 DELETE /api/outputs          清空产物
+GET    /api/uploads          历史上传列表（新→旧，含分辨率/时长/大小）
+DELETE /api/uploads/<id>     删一条上传（文件+索引一起）
 DELETE /api/files/<kind>/<n> 删单个产物（outputs|uploads）
 GET    /api/gpu | /api/sys   实时显卡 / CPU 内存
 GET    /fvdl/<kind>/<name>   直连下载（Range，?dl=1 附件）
