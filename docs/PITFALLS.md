@@ -116,3 +116,35 @@ HuggingFace 的 Xet 存储，hf-mirror 也是同一套后端），6.4 GB 要 **1
 用 `deploy/xgc/dl_parallel.py`（或 `fetch_ckpts.sh`，内部就是它）：失败自动换源、断点续传、
 完成后校验字节数。下载前先想清楚**这钱该不该花**：GPU 实例按秒计费，拿它挂着下 13 小时的
 权重 ≈ ¥20；并行下 12 分钟只要 ¥0.7。v1 权重还有 ModelScope 这条 10~80 MB/s 的快路。
+
+## 13. 长片 + `decode-every auto` = 内存被吃光，进程被 SIGKILL（退出码 -9）
+
+现象：UI 只显示「未知错误」，后端 `RuntimeError: run_stream 退出码 -9`。跟模型无关，跟 turbo/base 也无关。
+
+铁证在 cgroup 里，不是靠猜：
+
+```bash
+cat /sys/fs/cgroup/memory.events
+# oom_kill 3     ← 进程被内核 OOM killer 干掉了几次
+# max 33417      ← 摸了多少次 56 GB 上限
+```
+
+`-9` = SIGKILL，模型根本没机会抛错，所以 WebUI 只能拿到一个退出码。
+
+**根因**：`--decode-every` 默认 `auto`，上游会把**整个视频解码进内存**。720×1280 / 594 帧光原始帧
+（转 float32）就 6.5 GB，再叠加输出缓冲、色彩校正、时间合并的中间张量，56 GB 内存一头撞死。
+**显存反而是富裕的**（3.9 MP turbo 峰值只 11.9 GB / 24 GB）。
+
+实测对照（同一段 594 帧 720×1280，turbo → 1536×2560）：
+
+| 参数 | 结果 |
+|---|---|
+| `decode-every auto` | **72 s 被 SIGKILL**，内存冲到上限 |
+| `decode-every 28` | 内存稳态 **35~40 GB**，显存 11.9 GB，正常分段出片 |
+
+**已经做进 WebUI**（不用记参数）：
+
+- 素材超过 120 帧时**自动**加 `--decode-every 28`（`FVSR_AUTO_DECODE_EVERY` / `FVSR_AUTO_DECODE_MIN_FRAMES` 可调），
+  日志里会写「⚠ 素材 N 帧，自动分段解码」
+- `-9` / `137` 会被翻译成「内存被 OOM killer ...」加具体建议，不再是「未知错误」
+- 内存吃紧的手动填 `12`；**长片不要开省显存**（它把显存压力搬到内存，反而更容易被 OOM 杀）

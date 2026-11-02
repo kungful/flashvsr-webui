@@ -411,6 +411,16 @@ def _real_infer(job: dict, meta: dict, p: dict) -> None:
     if k != "auto":
         cmd += ["--attn-kernel", k]
     de = str(p.get("decode_every") or "auto")
+    if de in ("", "auto", "0"):
+        # 长片默认一次性读全片（auto）会把 56 GB 内存吃光，被内核 OOM killer
+        # 一枪打死（退出码 -9），UI 只能显示「未知错误」。帧数多就自动改分段解码。
+        nframes = int(meta.get("frames") or 0)
+        auto_de = int(os.environ.get("FVSR_AUTO_DECODE_EVERY", "28") or 0)
+        auto_min = int(os.environ.get("FVSR_AUTO_DECODE_MIN_FRAMES", "120") or 0)
+        if auto_de > 0 and nframes > auto_min:
+            de = str(auto_de)
+            log(job, f"⚠ 素材 {nframes} 帧，自动分段解码（--decode-every {de}）"
+                     f"——不这样的话整片会一次性读进内存，长片容易被 OOM killer 杀掉（-9）", "warn")
     if de not in ("", "auto", "0"):
         cmd += ["--decode-every", de]
     if p.get("color_fix"):
@@ -529,6 +539,14 @@ def _real_infer(job: dict, meta: dict, p: dict) -> None:
         rc = proc.wait()
 
     if rc != 0:
+        if rc == -9 or rc == 137:
+            raise RuntimeError(
+                f"进程被系统 SIGKILL 杀掉（退出码 {rc}）—— 不是模型报错，而是系统内存被吃光后"
+                f"内核 OOM killer 干掉的（本机内存 56 GB）。这次是 {w}×{h}"
+                f"（{w * h / 1e6:.1f} MP）、{meta.get('frames') or '?'} 帧。"
+                f"解决：勾「分段解码」填 28（或更小）、把目标尺寸降一档、或改用 turbo；"
+                f"长片不要开省显存（它把显存压力搬到内存，更容易被 OOM 杀）。"
+            )
         raise RuntimeError(f"run_stream 退出码 {rc}")
     if not out_path.exists() or out_path.stat().st_size < 1024:
         raise RuntimeError("没有产出文件")
