@@ -79,3 +79,23 @@ x264 编码、色彩校正、gaussian 时间合并都在 CPU 上；594 帧的片
 
 ckpt 在网络盘上（`/.xgcos/.links/...`），第一次加载 5.3 GB 的 dit + 1.1 GB 的 lq_proj_in
 要 110 秒左右，triton 还要 autotune。**这段在计费窗口里**，所以：能一次开机跑一批就别反复开关机。
+
+## 11. SDPA 后端在大尺寸是“直接报错”，不是慢
+
+`--attn-kernel auto` 在没装 BSA / flash-attn 的机器上会落到 SDPA，小尺寸能跑，一旦输出到
+1280×768 这类尺寸就抛：
+
+```
+RuntimeError: SDPA block-mask fallback would allocate too many mask entries;
+install block_sparse_attn or select a shorter sequence
+```
+
+这不是显存不够，也不是参数错，就是 mask 太大。解：
+
+```bash
+pip install -e operators/flashvsr_attn --no-build-isolation --no-deps   # 纯 Triton，秒装
+python -m inference.run_stream ... --attn-kernel triton_block_sparse
+```
+
+Triton 后端**不需要 flash-attn**（官方说“depends on FlashAttention utilities”，实测不用也能跑
+1280×768/2048 级别）。WebUI 侧用 `FVSR_ATTN_KERNEL=triton_block_sparse` 把默认后端钉住。

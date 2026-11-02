@@ -95,6 +95,23 @@ def real_available() -> bool:
     return ENGINE == "real" and (Path(REPO) / "inference" / "run_stream.py").is_file()
 
 
+def ckpt_modes() -> list:
+    """真引擎下只暴露权重真的在盘的档位（镜像里可能只装了一部分权重）"""
+    if not real_available():
+        return []
+    ok = []
+    for m in MODES:
+        d = Path(REPO) / "ckpts" / m
+        if (d / "dit.safetensors").is_file() or (d / "dit.ckpt").is_file():
+            ok.append(m)
+    return ok or list(MODES)
+
+
+def default_mode() -> str:
+    modes = ckpt_modes()
+    return modes[0] if modes else "turbo"
+
+
 def round128(v: float) -> int:
     """模型要求宽高都是 128 的倍数"""
     return max(128, int(round(v / 128.0)) * 128)
@@ -310,7 +327,8 @@ def _real_run(job: dict, meta: dict) -> None:
 
 
 def _real_infer(job: dict, meta: dict, p: dict) -> None:
-    mode = p["model"] if p["model"] in MODES else "turbo"
+    usable = ckpt_modes() or list(MODES)
+    mode = p["model"] if p["model"] in usable else default_mode()
     tcomp = int(p.get("temporal_compression", 4))
     if tcomp not in (1, 2, 4):
         tcomp = 4
@@ -339,6 +357,9 @@ def _real_infer(job: dict, meta: dict, p: dict) -> None:
     if p.get("low_vram"):
         cmd += ["--cache-offload-mode", "always"]
     k = p.get("attn_kernel") or "auto"
+    if k == "auto":
+        # 镜像里可以用环境变量钉住后端；triton 在 4090 上不需 flash-attn 也能用
+        k = (os.environ.get("FVSR_ATTN_KERNEL") or "auto").strip() or "auto"
     if k != "auto":
         cmd += ["--attn-kernel", k]
     de = str(p.get("decode_every") or "auto")
@@ -674,7 +695,8 @@ def api_hardware():
     g = gpu_info()
     g["ffmpeg"] = have("ffmpeg")
     g["engine"] = "real" if real_available() else "mock"
-    g["modes"] = list(MODES) if real_available() else []
+    g["modes"] = ckpt_modes()
+    g["default_mode"] = default_mode()
     g["repo"] = REPO
     return jsonify(g)
 
@@ -1121,7 +1143,7 @@ def api_estimate():
         "temporal_compression": int(body.get("temporal_compression", 4)),
         "low_vram": bool(body.get("low_vram")),
         "decode_every": body.get("decode_every", "auto"),
-        "model": body.get("model", "turbo"),
+        "model": body.get("model") or default_mode(),
         "model_family": "flashvsr-plus",
     }
     return jsonify(estimate_resources(meta, p, bool(body.get("allow_heavy"))))

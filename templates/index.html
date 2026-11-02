@@ -672,6 +672,15 @@ fetch(P + '/api/hardware').then(r=>r.json()).then(h=>{
   $('#modeTag').textContent = mock ? '模拟引擎' : '真实推理 · FlashVSR+';
   $('#modeTag').className = 'tag' + (mock ? ' warn' : '');
   window.__mock = mock;
+  // 只放出权重真的在盘的档位：镜像里可能只装了 v1
+  const avail = new Set((h.modes && h.modes.length) ? h.modes : ['turbo','base','v1']);
+  const sel = $('#model');
+  if(sel){
+    [...sel.options].forEach(o=>{
+      if(!avail.has(o.value)){ o.disabled = true; if(!o.textContent.includes('未装')) o.textContent += '（未装权重）'; }
+    });
+    if(!avail.has(sel.value)){ const first = [...sel.options].find(o=>!o.disabled); if(first) sel.value = first.value; }
+  }
   refreshEstimate();
 }).catch(()=>{ $('#hw').innerHTML = '<span class="dot off"></span> 后端未响应'; });
 

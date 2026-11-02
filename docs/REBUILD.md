@@ -84,11 +84,20 @@ curl -s localhost:7860/api/hardware        # engine 应为 real，modes 有 turb
 
 ## 5. 成功之后 —— 立刻存镜像（这次没做，就是丢的原因）
 
+仙宫云按量实例**必须先关机才能存镜像**（`saveimage` 直接调会回 `请关机后执行储存镜像操作`），
+关机顺序还能省钱（GPU 一停就不再按小时计费）：
+
 ```bash
-python3 ~/.pi/agent/skills/xgc-api/scripts/xgc.py saveimage <实例id> --name "flashvsr-webui-$(date +%m%d)" --yes
+X=~/.pi/agent/skills/xgc-api/scripts/xgc.py
+python3 $X shutdown <实例id> --release-gpu --yes    # GPU 停止计费，只留磁盘 ¥0.00003/GB/h
+# 等 status 从 shutdown_backing_up → shutdown（约 3~4 分钟）
+python3 $X saveimage <实例id> --name "flashvsr-webui-$(date +%m%d)" --yes
+# 等 xgc.py images 里出现 status=available（约几分钟）
+python3 $X destroy <实例id> --yes                   # 镜像保留，实例和数据盘清掉
 ```
 
-存完再销毁实例。镜像只是存储费，比"重下 7 GB 权重 + 重装 torch"便宜太多。
+注意：`name` 参数在实测中**没生效**，镜像会存成实例 id 的 UUID，存完自己认一下 id。
+做好的那个镜像见 [`IMAGE-XGC.md`](IMAGE-XGC.md)（`08da873c-f3d5-4805-a649-53e6d753967e`）。
 
 ## 常见坑
 

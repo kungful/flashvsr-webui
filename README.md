@@ -47,6 +47,7 @@ make smoke
 | 任意 Linux + GPU | `deploy/systemd/flashvsr-webui.service` | 最通用，暴露 7860 |
 | Docker / RunPod / Vast | `make docker-up` | 权重挂载，别打进镜像 |
 | 仙宫云 XGC | `./deploy/xgc/deploy_xgc.sh` | 一键：开实例→装→自检 |
+| 仙宫云 现成镜像 | 镜像 `08da873c-f3d5-4805-a649-53e6d753967e` | 环境+v1 权重+自启都装好，开机即用，见 [`docs/IMAGE-XGC.md`](docs/IMAGE-XGC.md) |
 
 细节见 [`docs/PROVIDERS.md`](docs/PROVIDERS.md)。
 
@@ -63,6 +64,7 @@ make smoke
 | `FVSR_UPSTREAM` | 空 | 官方 Gradio UI 地址，反代到 `/g` |
 | `FVSR_GPU_MB` / `FVSR_RAM_GB` | 24564 / 56 | 预检用的硬件上限 |
 | `FVSR_SAFE_MP` / `FVSR_STALL_TIMEOUT` | — | 面积安全线 / 卡死判定秒数 |
+| `FVSR_ATTN_KERNEL` | 空（=auto） | 留空时用上游 auto；钉成 `triton_block_sparse` 可绕开 SDPA 大尺寸报错（见 PITFALLS 11） |
 
 ## 接口
 
