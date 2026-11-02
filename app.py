@@ -1145,9 +1145,20 @@ def api_outputs():
 # 加上本机实测校准（/root/fvsr-data/calib.jsonl）
 MODELS = {
     "flashvsr-plus": {
-        "label": "FlashVSR+ (turbo/base/v1)",
+        "label": "FlashVSR+ (turbo / v1)",
         "weights_gb": 6.4,
-        "mp_coef": 2.0,      # 每 MP 输出占的显存
+        "mp_coef": 2.0,      # 每 MP 输出占的显存（hybrid-b25，实测 3.9MP ≈ 11.9 GB）
+        "fixed_gb": 1.6,
+    },
+    # base 走全量注意力，KV cache 随序列长度（≈ 像素数）涨得凶得多。
+    # 实测（48G 卡）：base + 2176×3840（8.36 MP）→ 上游自报
+    #   estimated_no_offload_peak=59843MiB，可用只有 43683MiB，于是 offload 30 层 KV，
+    #   结果 GPU/CPU 双双拉满、Flask 与 sshd 都没法响应 = 整机卡死。
+    # 按 (59.8-6.4)/8.4 ≈ 6.3 反推，这里取 7.0 留余量。
+    "flashvsr-plus-base": {
+        "label": "FlashVSR+ base（全量注意力）",
+        "weights_gb": 6.4,
+        "mp_coef": 7.0,
         "fixed_gb": 1.6,
     },
 }
@@ -1199,7 +1210,9 @@ def estimate_resources(meta: dict, p: dict, allow_heavy: bool = False) -> dict:
     tcomp = int(p.get("temporal_compression", 4)) or 4
     low = bool(p.get("low_vram"))
     decode_auto = str(p.get("decode_every", "auto")) in ("auto", "", "0")
-    m = MODELS[p.get("model_family", "flashvsr-plus")]
+    fam = "flashvsr-plus-base" if str(p.get("model") or "").lower() == "base" \
+        else p.get("model_family", "flashvsr-plus")
+    m = MODELS.get(fam) or MODELS["flashvsr-plus"]
 
     vram = m["fixed_gb"] + m["mp_coef"] * mp
     if not low:

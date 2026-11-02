@@ -148,3 +148,29 @@ cat /sys/fs/cgroup/memory.events
   日志里会写「⚠ 素材 N 帧，自动分段解码」
 - `-9` / `137` 会被翻译成「内存被 OOM killer ...」加具体建议，不再是「未知错误」
 - 内存吃紧的手动填 `12`；**长片不要开省显存**（它把显存压力搬到内存，反而更容易被 OOM 杀）
+
+## 14. base + 8 MP 不是「慢」，是直接把整机拖死（48G 卡也不行）
+
+现象：进度条卡在 84%，前端报「后端连不上（31 次）」，SSH 也 banner 超时，GPU/CPU 双双 100%。
+
+上游自己算出来的数是铁证（日志那一行）：
+
+```
+✓ KV cache policy: auto; offload 30 layers;
+  estimated_no_offload_peak=59843MiB exceeds available VRAM (43683MiB)
+```
+
+**base + 2176×3840（8.36 MP）需要 59.8 GB 显存**，48G 卡可用只有 43.6 GB。于是它把 30 层
+KV cache offload 到内存硬撑 —— 结果不是慢，是 GPU 满载 + CPU 满载 + 内存带宽打满，
+Flask 和 sshd 都抢不到 CPU，整机看起来「死」了（重启才恢复）。
+
+对照：同一个 8.36 MP，turbo 只要 ~23.4 GB（hybrid-b25 省 45% 峰值显存），48G 卡轻松跑。
+
+所以预算要分开算（预检已按这个改，`mp_coef` 从 2.0 拆成 turbo 2.0 / base 7.0）：
+
+| 模型 | 8.36 MP | 3.93 MP |
+|---|---|---|
+| turbo | 23.7 GB = 49% ✅ | 15.3 GB = 32% ✅ |
+| base | **65.5 GB = 136% ❌ 会卡死整机** | 35.9 GB = 75% ⚠️ 能用但没余量 |
+
+**结论**：base 想上 4K 得 80 GB 级别的卡；48G 卡上 base 就到 4~5 MP，8 MP 交给 turbo。
