@@ -304,9 +304,12 @@ def probe(path: Path) -> dict:
 def gpu_info() -> dict:
     """尽力探测硬件；本机无卡时前端会显示「仅 UI 模拟」"""
     if have("nvidia-smi"):
-        p = run(["nvidia-smi", "--query-gpu=name,memory.total,driver_version",
-                 "--format=csv,noheader,nounits"], timeout=15)
-        if p.returncode == 0 and p.stdout.strip():
+        try:
+            p = run(["nvidia-smi", "--query-gpu=name,memory.total,driver_version",
+                     "--format=csv,noheader,nounits"], timeout=15)
+        except (OSError, subprocess.SubprocessError):
+            p = None   # 满载时 nvidia-smi 可能超时/卡住，别把 /api/hardware 弄成 500
+        if p is not None and p.returncode == 0 and p.stdout.strip():
             name, mem, drv = [x.strip() for x in p.stdout.splitlines()[0].split(",")]
             try:
                 import torch  # noqa
@@ -523,6 +526,9 @@ def _real_infer(job: dict, meta: dict, p: dict) -> None:
             elif "DiT stream inference complete" in line:
                 CEIL["v"] = 88.0
                 bump(84.0, "DiT 流式推理完成")
+                log(job, "→ 接下来是 TinyDecoder 解码 + 色彩校正 + x264 封装：长片（几百帧）这步要几分钟，"
+                         "没有细粒度进度，进度条看着不动是正常的。**别重复点开始** —— 重新提交会先把"
+                         "这次进程 pkill 掉（日志里就是「退出码 -9」）", "warn")
             elif "TinyDecoder complete" in line:
                 CEIL["v"] = 91.0
                 bump(89.0, "解码器完成")
@@ -541,11 +547,12 @@ def _real_infer(job: dict, meta: dict, p: dict) -> None:
     if rc != 0:
         if rc == -9 or rc == 137:
             raise RuntimeError(
-                f"进程被系统 SIGKILL 杀掉（退出码 {rc}）—— 不是模型报错，而是系统内存被吃光后"
-                f"内核 OOM killer 干掉的（本机内存 56 GB）。这次是 {w}×{h}"
-                f"（{w * h / 1e6:.1f} MP）、{meta.get('frames') or '?'} 帧。"
-                f"解决：勾「分段解码」填 28（或更小）、把目标尺寸降一档、或改用 turbo；"
-                f"长片不要开省显存（它把显存压力搬到内存，更容易被 OOM 杀）。"
+                f"进程收到 SIGKILL（退出码 {rc}）—— 模型没报错。常见三种原因：\n"
+                f"  1) 又提交了一次任务：启动新任务前会 pkill 掉残留的 run_stream，旧任务就是 -9；\n"
+                f"  2) 在页面上点了停止/删除；\n"
+                f"  3) 系统内存被 OOM killer 清理（本机 {RAM_TOTAL_GB:.0f} GB；"
+                f"看 /sys/fs/cgroup/memory.events 的 oom_kill 是否在涨，不涨就不是 OOM）。\n"
+                f"本次：{w}×{h}（{w * h / 1e6:.1f} MP）、{meta.get('frames') or '?'} 帧。"
             )
         raise RuntimeError(f"run_stream 退出码 {rc}")
     if not out_path.exists() or out_path.stat().st_size < 1024:
@@ -1045,10 +1052,13 @@ def api_gpu():
     """实时显卡占用（真模式下前端会轮询，兼做后端存活信号）"""
     out = {"ok": False}
     if have("nvidia-smi"):
-        p = run(["nvidia-smi",
-                 "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw",
-                 "--format=csv,noheader,nounits"], timeout=8)
-        if p.returncode == 0 and p.stdout.strip():
+        try:
+            p = run(["nvidia-smi",
+                     "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw",
+                     "--format=csv,noheader,nounits"], timeout=8)
+        except (OSError, subprocess.SubprocessError):
+            p = None   # 推理满载时 nvidia-smi 常超 8s；轮询接口不能因此抛 500
+        if p is not None and p.returncode == 0 and p.stdout.strip():
             try:
                 name, util, used, total, temp, power = [
                     x.strip() for x in p.stdout.splitlines()[0].split(",")]
@@ -1142,8 +1152,45 @@ MODELS = {
     },
 }
 
-GPU_TOTAL_MB = int(os.environ.get("FVSR_GPU_MB", "24564"))
-RAM_TOTAL_GB = float(os.environ.get("FVSR_RAM_GB", "56"))
+GPU_TOTAL_MB_LEGACY = 24564  # 探测失败时的兜底
+
+
+def _detect_gpu_mb() -> int:
+    """显存上限：环境变量 > nvidia-smi > 兜底。别写死 24564 ——
+    48G 卡上预检会误报「会爆显存」，实际显存富裕得很（已经把人坑过）。"""
+    env = (os.environ.get("FVSR_GPU_MB") or "").strip()
+    if env.isdigit():
+        return int(env)
+    if have("nvidia-smi"):
+        try:
+            p = run(["nvidia-smi", "--query-gpu=memory.total",
+                     "--format=csv,noheader,nounits"], timeout=15)
+            if p.returncode == 0 and p.stdout.strip():
+                return int(float(p.stdout.splitlines()[0].strip()))
+        except Exception:
+            pass
+    return GPU_TOTAL_MB_LEGACY
+
+
+def _detect_ram_gb() -> float:
+    env = (os.environ.get("FVSR_RAM_GB") or "").strip()
+    if env:
+        try:
+            return float(env)
+        except Exception:
+            pass
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) / 1048576.0
+    except Exception:
+        pass
+    return 56.0
+
+
+GPU_TOTAL_MB = _detect_gpu_mb()
+RAM_TOTAL_GB = _detect_ram_gb()
 
 
 def estimate_resources(meta: dict, p: dict, allow_heavy: bool = False) -> dict:
